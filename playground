@@ -1,0 +1,412 @@
+#!/usr/bin/env bash
+#see https://github.com/syp1975/playground
+
+usage() {
+  cat <<EOF
+**Playground.
+Retrieves scripts, snippets and ansible playbooks from a remote repository/website.
+Usage:
+  pg [@<repo>] <file> [...]: executes a script (with bash).
+  pg [@<repo>] debug <file> [...]: debugs a script (with bash -x).
+  pg [@<repo>] help <file>: shows help for a script.
+  pg [@<repo>] url <file>: writes to stdout the full url that points to the file.
+  pg [@<repo>] cat <file>: writes to stdout the contents of the file.
+  pg [@<repo>] play <<file> ..> [...]: runs with ansible-playbook a list of playbooks.
+  pg src [<repo> [--default]]: selects a source repository.
+    --default: also sets the default selected repository at login.
+    With no parameters, prints the selected repository name.
+  pg add <repo> [--force] [--auth <token>] [--download] [<uri>] [...]: adds a source repository.
+    --force: overwrites an existing configuration file.
+    --download: downloads the configuration file from the uri instead of using the uri as the source.
+    --auth <token>: github personal access token to access a private repository.
+    If no <uri> is specified, creates an empty file and opens the editor.
+  pg edit [<repo>]: opens the configuration file of the repository with the editor.
+  pg push [message]: commits and pushes (with git) all modifications, deletions and additions in the working tree of the current folder.
+Where:
+  repo: name of a file located in ~/.playground/rc/ that contains the configuration of the source repository.
+    Only alphanumerics, dashes and underscores are accepted in the name.
+  uri: base url to download a file from the repository, including ending slashes if needed.
+  file: path of the file to be retrieved from the repository.
+  ...: optional parameters passed to the script/ansible-playbook/curl.
+EOF
+}
+
+sanitize() {
+  echo ${1//[^a-zA-Z0-9._\-]/}
+}
+
+sanitizedot() {
+  echo ${1//[^a-zA-Z0-9_\-]/}
+}
+
+setup_colors() {
+  if [[ -t 2 ]] && [[ -z "${NO_COLOR-}" ]] && [[ "${TERM-}" != "dumb" ]]; then
+    NOFORMAT='\033[0m' RED='\033[0;31m' GREEN='\033[0;32m' ORANGE='\033[0;33m' BLUE='\033[0;34m' PURPLE='\033[0;35m' CYAN='\033[0;36m' YELLOW='\033[1;33m'
+  else
+    NOFORMAT='' RED='' GREEN='' ORANGE='' BLUE='' PURPLE='' CYAN='' YELLOW=''
+  fi
+}
+
+msg() {
+  echo >&2 -e "${1-}"
+}
+
+msg-red() {
+  echo >&2 -e "${RED}${1-}${NOFORMAT}"
+}
+
+msg-green() {
+  echo >&2 -e "${GREEN}${1-}${NOFORMAT}"
+}
+
+msg-orange() {
+  echo >&2 -e "${ORANGE}${1-}${NOFORMAT}"
+}
+
+msg-blue() {
+  echo >&2 -e "${BLUE}${1-}${NOFORMAT}"
+}
+
+msg-purple() {
+  echo >&2 -e "${PURPLE}${1-}${NOFORMAT}"
+}
+
+msg-cyan() {
+  echo >&2 -e "${CYAN}${1-}${NOFORMAT}"
+}
+
+msg-yellow() {
+  echo >&2 -e "${YELLOW}${1-}${NOFORMAT}"
+}
+
+template() {
+#replaces shell variables with expansion on stdin or a file and outputs to stdout
+  #no parameters
+  if [ -z "$1" ]; then
+    #use stdin, escape double quotes and back ticks to avoid nuking the shell
+    local tpl=$(sed -e 's/^\(["`]\)/\\\1/g; s/""/"\\"/g; s/``/`\\`/g; s/\([^\\]\)\(["`]\)/\1\\\2/g')
+    #replace variables with shell expansion
+    eval "echo \"${tpl}\""
+  else
+    #read contents of file
+    cat "$1" | template
+  fi
+}
+
+cfgset() {
+#appends, updates, comments or removes a key-value pair in a config file, not suitable for yaml
+#usage:
+#  cfgset <file> <key> [value [pub_value]]
+#    key value pair separated by a space
+#  cfgset <file> <key> <sep_char> [value [pub_value]]
+#    key value pair separated by sep_char (= or : allowed)
+#  cfgset <file> <pre_char> <key>
+#    comment/prefix line with pre_char (# or ; allowed)
+#  if value is omitted, the line is removed from the file
+#  pub_value is used instead of value on stdout to avoid leaking passwords or tokens
+  #read arguments
+  file="$1"
+  shift
+  case $1 in
+    \# | \;)
+      comment=$1
+      shift
+      ;;
+    *)
+      comment=""
+      ;;
+  esac
+  key="$1"
+  shift
+  case $1 in
+    = | :)
+      sep=$1
+      shift
+      ;;
+    *)
+      sep=' '
+      ;;
+  esac
+  if [[ "$comment" == "" ]]; then
+    val="$1"
+  else
+    val=""
+  fi
+  shift
+  pub="${1:-$val}"
+  shift
+
+  #count the number times the key appears uncommented on the file
+  if [ -f "$file" ]; then
+    count=$(cat "$file" | grep -c -e "^\s*$key\s*[\s=:]")
+  else
+    count=0
+  fi
+
+  #key already exists?
+  if [ $count -gt 0 ]; then
+    #comment key?
+    if [ ! -z "$comment" ]; then
+      msg-blue "[$file] comment $key"
+      sed -i "s/^\($key[ =:].*\)/$comment\1/" "$file"
+    #value is defined?
+    elif [ ! -z "$val" ]; then
+      msg-blue "[$file] update $key$sep$pub"
+      val=$(printf '%s' "$val" | sed -e 's/[\/&]/\\&/g')
+      sed -i "s/^\($key[ =:]\).*/\1$val/" "$file"
+    else
+      msg-blue "[$file] remove $key"
+      sed -i "/^$key[ =:].*/d" "$file"
+    fi
+  #value is defined?
+  elif [ ! -z "$val" ]; then
+    msg-blue "[$file] append $key$sep$pub"
+    echo "$key$sep$val" >> "$file"
+  fi
+}
+
+#system config
+DISTRO_NAME=$(lsb_release -is|tr '[:upper:]' '[:lower:]')
+DISTRO_VERSION=$(lsb_release -rs)
+DISTRO_RELEASE=$(lsb_release -cs)
+HOSTNAME=$(hostname)
+
+#script info
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd -P)
+SCRIPT_NAME=$(basename "${BASH_SOURCE[0]}")
+(return 0 2>/dev/null) && die="return" || die="exit"
+
+#command to retrieve files
+cmd=(curl -sfS)
+
+setup_colors
+
+#display usage if no parameter is given
+[ $# -lt 1 ] && usage && $die
+
+case $1 in
+  add)
+    #add a repository configuration file
+    shift
+    #<repo>
+    name="$1"
+    [ -z "$name" ] && msg-red "Repository name is missing." && $die -1
+    [[ "$name" != $(sanitize "$name") ]] && msg-red "Repository name contains invalid characters" && $die -2
+    shift
+    #--force: do not overwrite an existing file unless the force parameter is present
+    if [[ "$1" == "--force" ]]; then
+      shift
+    elif [ -f ~/.playground/rc/$name ]; then
+      msg-red "[$name] repository configuration file already exists."
+      $die -3
+    fi
+    #--auth <token>: add personal access token authentication header (github private repo)
+    [[ "$1" == "--auth" ]] && shift && pat="$1" && cmd+=(-H "Authorization: token $1") && shift
+    #--download: download configuration file from uri
+    if [[ "$1" == "--download" ]]; then
+      shift
+      [ $# -eq 0 ] && msg-red "[$name] A uri is required to download the file." && $die -4
+      msg-blue "[$name] Downloading the repository config file ..."
+      #use extra parameters for curl
+      cmd+=($@)
+      "${cmd[@]}" > ~/.playground/rc/$name
+    #update an existing repo config file
+    elif [ -f ~/.playground/rc/$name ]; then
+      #<uri>
+      uri="$1"
+      shift
+      msg-blue "[$name] Updating the repository config file ..."
+      [ ! -z "$uri" ] && cfgset ~/.playground/rc/$name "PGSRC" = "\"$uri\""
+      [ ! -z "$pat" ] && cfgset ~/.playground/rc/$name "PGPAT" = "\"$pat\""
+      [ ! -z "$@" ] && cfgset ~/.playground/rc/$name "PGEXTRA" = "\"$@\""
+      #source uri not defined: open the editor
+      [ -z "$uri" ] && ${EDITOR:-nano} ~/.playground/rc/$name
+    #create a new repo config file
+    else
+      #<uri>
+      uri="$1"
+      shift
+      msg-blue "[$name] Creating the repository config file ..."
+      #create a template repo config file
+      cat <<EOT >> ~/.playground/rc/$name
+#!/usr/bin/env bash
+#the base url or your repository is required (include ending slash if required)
+PGSRC="$uri"
+#your personal access token (for github private repos)
+PGPAT="$pat"
+#additional parameters passed to curl
+PGEXTRA="$@"
+
+#add additional variables used by your scripts here
+EOT
+      #source uri not defined: open the editor
+      [ -z "$uri" ] && ${EDITOR:-nano} ~/.playground/rc/$name
+    fi
+    $die
+    ;;
+    
+  edit)
+    #edit a repository configuration file
+    shift
+    #<repo>
+    name="$1"
+    [ -z "$name" ] && name="$PGNAME"
+    [ -z "$name" ] && msg-red "Repo name is missing." && $die -1
+    [[ "$name" != $(sanitize "$name") ]] && msg-red "Repo name contains invalid characters." && $die -2
+    [ ! -f ~/.playground/rc/$name ] && msg-red "[$name] repository configuration file not found." && $die -3
+    shift      
+    #open the editor
+    ${EDITOR:-nano} ~/.playground/rc/$name
+    $die
+    ;;
+
+  src)
+    #select source repository
+    shift
+    #w/o parameters print current selected source repository and exit
+    [ $# -eq 0 ] && echo "$PGNAME" && $die
+    #<repo>
+    name="$1"
+    #check if repository name is valid
+    [[ "$name" != $(sanitizedot "$name") ]] && msg-red "Repo name contains invalid characters." && $die -1
+    [ ! -f ~/.playground/rc/$name ] && msg-red "[$name] repository configuration not found" && $die -2
+    shift
+    #--default: set default source repo
+    [[ "$1" == "--default" ]] && sed -i "s/^export PGNAME=.*/export PGNAME=$name/" ~/.bashrc
+    msg-green "[$name] repository has been selected"
+    export PGNAME="$name"
+    $die
+    ;;
+
+  push)
+    #commit and push all changes in the current working tree
+    shift
+    #add all new files
+    git add --all --verbose
+    #commit all unstashed changes
+    if [ $# -eq 0 ]; then
+      git commit -a
+    else
+      git commit -a -m "$@"
+    fi
+    #push to origin
+    git push
+    $die
+    ;;
+
+  @*)
+    #use a named source repository
+    #<repo>
+    name="${1:1}"
+    shift
+    ;;
+    
+  *)
+    #use selected source repository
+    name="$PGNAME"
+    ;;
+esac
+
+#a repository configuration file is needed
+[ -z "$name" ] && msg-red "No repository has been selected." && $die -1
+
+#check for invalid characters
+[[ "$name" != $(sanitizedot "$name") ]] && msg-red "Repo name contains invalid characters." && $die -2
+
+#repo config file must exist
+[ ! -f ~/.playground/rc/$name ] && msg-red "[$name] Repository configuration file not found." && $die -3
+
+#source the configuration file
+. ~/.playground/rc/$name
+
+#source the per host configuration file
+[ -f ~/.playground/rc/$name.$HOSTNAME ] && . ~/.playground/rc/$name.$HOSTNAME
+
+#at least the repo source url must had been defined
+[ -z "$PGSRC" ] && msg-red "[$name] Repository source has not been configured." && $die -4
+
+#add personal access token authentication header (github private repo)
+[ ! -z "$PGPAT" ] && cmd+=(-H "Authorization: token $PGPAT")
+
+#add extra parameters to curl
+[ ! -z "$PGEXTRA" ] && cmd+=($PGEXTRA)
+
+case $1 in
+  --)
+    $die
+    ;;
+
+  help)
+    shift
+    #downloads contents of file into memory
+    file=$("${cmd[@]}" "$PGSRC$1")
+    ok=0
+    #process line by line
+    while IFS= read -r LINE; do
+      #skip lines starting with #!
+      if [[ "$LINE" == \#!* ]]; then
+        continue
+      #print lines starting with #
+      elif [[ "$LINE" == \#* ]]; then
+        echo "${LINE:1}"
+        ok=1
+      #end with first uncomented line
+      else
+        break
+      fi
+    done < <(printf '%s\n' "$file")
+    [ $ok -eq 0 ] && msg-yellow "[$name] $1 has no help." && $die -5
+    ;;
+
+  url)
+    shift
+    echo "$PGSRC$1"
+    ;;
+
+  cat)
+    shift
+    if [[ "$1" == "--template" ]]; then
+      shift
+      "${cmd[@]}" "$PGSRC$1" | template
+    else
+      "${cmd[@]}" "$PGSRC$1"
+    fi
+    ;;
+
+  play)
+    shift
+    #a temporary directory is created
+    dst=$(mktemp -d "/tmp/${SCRIPT_NAME}.XXXXXXXX")
+    #cleanup temp dir on exit
+    trap "popd && rm -rf -- '$dst'" SIGINT SIGTERM ERR EXIT
+    pushd "$dst"
+    playbooks=()
+    #stop downloading files when next parameter starts with a dash
+    while [[ "$1" != "" && "$1" != -* ]]; do
+      msg-blue "[$name] Downloading playbook \"$1\" ..."
+      "${cmd[@]}" -o "$1" --create-dirs "$PGSRC$1"
+      playbooks+=("$1")
+      shift
+    done
+    [ ${playbooks[#]} -lt 1 ] && msg-red "[$name] At least one playbook is needed." && $die -3
+    ansible-playbook "$@" "${playbooks[@]}"
+    ;;
+
+  debug)
+    shift
+    #downloads contents of file into memory
+    file=$("${cmd[@]}" "$PGSRC$1")
+    shift
+    #source the playground script and append a terminating new line to the end of the file
+    printf 'PGNAME=%s \n. %s --\n%s\n' "$name" "$SCRIPT_DIR/$SCRIPT_NAME" "$file" | bash -x /dev/stdin "$@"
+    ;;
+
+  *)
+    #downloads contents of file into memory
+    file=$("${cmd[@]}" "$PGSRC$1")
+    shift
+    #source the playground script and append a terminating new line to the end of the file
+    printf 'PGNAME=%s\n. %s --\n%s\n' "$name" "$SCRIPT_DIR/$SCRIPT_NAME" "$file" | bash /dev/stdin "$@"
+    ;;
+
+esac

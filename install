@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+#this script will install/update playground on your account.
+#it will overwrite your existing playground file.
+
+#source repository name
+NAME=${PGNAME:-playground}
+[[ "$NAME" != ${NAME//[^a-zA-Z0-9._\-]/} ]] && echo "Source repository name contains invalid characters." >&2 && exit -1
+
+#source url of the repository
+SRC=${PGSRC:-"https://raw.githubusercontent.com/syp1975/playground/main/"}
+
+#create folders
+if [ ! -e ~/.playground/rc ]; then
+  mkdir -p ~/.playground/rc
+  #set privacy permissions on repo config folder
+  chmod 700 ~/.playground/rc
+  #set default permissions on new files if setfacl is avaliable
+  if command -v setfacl; then
+    setfacl -d -m g:: ~/.playground/rc
+    setfacl -d -m o:: ~/.playground/rc
+  fi
+fi
+
+echo "Downloading playground from $SRC ..." >&2
+CMD="curl -sfS"
+[ ! -z "$PGPAT" ] && CMD="$CMD -H \"Authorization: token $PGPAT\""
+$CMD $PGEXTRA "${SRC}playground" > ~/.playground/playground
+
+#setting execution permision on playground script
+chmod 755 ~/.playground/playground
+
+#appends .playground to your .bashrc
+if grep -qxF 'alias pg=". ~/.playground/playground"' ~/.bashrc; then
+  echo 'Updating playground ...'  >&2
+else
+  echo 'Installing playground ...' >&2
+  cat <<EOT >> ~/.bashrc
+
+#https://github.com/syp1975/playground
+#remove this lines and delete the ~/.playground folder to uninstall
+export PGNAME="$NAME"
+alias pg=". ~/.playground/playground"
+EOT
+fi
+
+#config file for the source repository
+if [ ! -f ~/.playground/rc/$NAME ]; then
+  echo "Configuring the repository '$NAME' ..." >&2
+  echo "PGSRC=\"$SRC\"" > ~/.playground/rc/$NAME
+  [ ! -z "$PGPAT" ] && (echo "PGPAT=\"$PGPAT\"" >> ~/.playground/rc/$NAME)
+  [ ! -z "$PGEXTRA" ] && (echo "PGEXTRA=\"$PGEXTRA\"" >> ~/.playground/rc/$NAME)
+  #setting privacy permissions on configuration file
+  chmod 600 ~/.playground/rc/$NAME
+fi
+
+echo 'Done.' >&2
+echo 'Logout and login again to initialize playground.' >&2
