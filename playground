@@ -32,11 +32,11 @@ EOF
 }
 
 sanitize() {
-  echo ${1//[^a-zA-Z0-9._\-]/}
+  echo "${1//[^a-zA-Z0-9._\-]/}"
 }
 
 sanitizedot() {
-  echo ${1//[^a-zA-Z0-9_\-]/}
+  echo "${1//[^a-zA-Z0-9_\-]/}"
 }
 
 setup_colors() {
@@ -80,17 +80,12 @@ msg-yellow() {
 }
 
 template() {
-#replaces shell variables with expansion on stdin or a file and outputs to stdout
-  #no parameters
-  if [ -z "$1" ]; then
-    #use stdin, escape double quotes and back ticks to avoid nuking the shell
-    local tpl=$(sed -e 's/^\(["`]\)/\\\1/g; s/""/"\\"/g; s/``/`\\`/g; s/\([^\\]\)\(["`]\)/\1\\\2/g')
-    #replace variables with shell expansion
-    eval "echo \"${tpl}\""
-  else
-    #read contents of file
-    cat "$1" | template
-  fi
+#replaces shell variables with expansion on stdin and outputs to stdout
+  #escape double quotes and back ticks to avoid nuking the shell
+  local tpl
+  tpl=$(sed -e 's/^\(["`]\)/\\\1/g; s/""/"\\"/g; s/``/`\\`/g; s/\([^\\]\)\(["`]\)/\1\\\2/g')
+  #replace variables with shell expansion
+  eval "echo \"${tpl}\""
 }
 
 cfgset() {
@@ -127,7 +122,7 @@ cfgset() {
       sep=' '
       ;;
   esac
-  if [[ "$comment" == "" ]]; then
+  if [ -z "$comment" ]; then
     val="$1"
   else
     val=""
@@ -138,28 +133,28 @@ cfgset() {
 
   #count the number times the key appears uncommented on the file
   if [ -f "$file" ]; then
-    count=$(cat "$file" | grep -c -e "^\s*$key\s*[\s=:]")
+    count=$(grep -c -e "^[;]*$key\s*[\s=:]" < "$file")
   else
     count=0
   fi
 
   #key already exists?
-  if [ $count -gt 0 ]; then
+  if [ "$count" -gt 0 ]; then
     #comment key?
-    if [ ! -z "$comment" ]; then
+    if [ -n "$comment" ]; then
       msg-blue "[$file] comment $key"
-      sed -i "s/^\($key[ =:].*\)/$comment\1/" "$file"
+      sed -i "s/^\(${key}[ =:].*\)/${comment}\1/" "$file"
     #value is defined?
-    elif [ ! -z "$val" ]; then
+    elif [ -n "$val" ]; then
       msg-blue "[$file] update $key$sep$pub"
       val=$(printf '%s' "$val" | sed -e 's/[\/&]/\\&/g')
-      sed -i "s/^\($key[ =:]\).*/\1$val/" "$file"
+      sed -i "s/^[;]*\(${key}[ =:]\).*/\1${val}/" "$file"
     else
       msg-blue "[$file] remove $key"
-      sed -i "/^$key[ =:].*/d" "$file"
+      sed -i "/^${key}[ =:].*/d" "$file"
     fi
   #value is defined?
-  elif [ ! -z "$val" ]; then
+  elif [ -n "$val" ]; then
     msg-blue "[$file] append $key$sep$pub"
     echo "$key$sep$val" >> "$file"
   fi
@@ -196,7 +191,7 @@ case $1 in
     #--force: do not overwrite an existing file unless the force parameter is present
     if [[ "$1" == "--force" ]]; then
       shift
-    elif [ -f ~/.playground/rc/$name ]; then
+    elif [ -f ~/.playground/rc/"$name" ]; then
       msg-red "[$name] repository configuration file already exists."
       $die -3
     fi
@@ -208,19 +203,19 @@ case $1 in
       [ $# -eq 0 ] && msg-red "[$name] A uri is required to download the file." && $die -4
       msg-blue "[$name] Downloading the repository config file ..."
       #use extra parameters for curl
-      cmd+=($@)
-      "${cmd[@]}" > ~/.playground/rc/$name
+      cmd+=("$@")
+      "${cmd[@]}" > ~/.playground/rc/"$name"
     #update an existing repo config file
-    elif [ -f ~/.playground/rc/$name ]; then
+    elif [ -f ~/.playground/rc/"$name" ]; then
       #<uri>
       uri="$1"
       shift
       msg-blue "[$name] Updating the repository config file ..."
-      [ ! -z "$uri" ] && cfgset ~/.playground/rc/$name "PGSRC" = "\"$uri\""
-      [ ! -z "$pat" ] && cfgset ~/.playground/rc/$name "PGPAT" = "\"$pat\""
-      [ ! -z "$@" ] && cfgset ~/.playground/rc/$name "PGEXTRA" = "\"$@\""
+      [ -n "$uri" ] && cfgset ~/.playground/rc/"$name" "PGSRC" = "\"$uri\""
+      [ -n "$pat" ] && cfgset ~/.playground/rc/"$name" "PGPAT" = "\"$pat\""
+      [ $# -gt 0 ] && cfgset ~/.playground/rc/"$name" "PGEXTRA" = "$@"
       #source uri not defined: open the editor
-      [ -z "$uri" ] && ${EDITOR:-nano} ~/.playground/rc/$name
+      [ -z "$uri" ] && ${EDITOR:-nano} ~/.playground/rc/"$name"
     #create a new repo config file
     else
       #<uri>
@@ -228,7 +223,7 @@ case $1 in
       shift
       msg-blue "[$name] Creating the repository config file ..."
       #create a template repo config file
-      cat <<EOT >> ~/.playground/rc/$name
+      cat <<EOT >> ~/.playground/rc/"$name"
 #!/usr/bin/env bash
 #the base url or your repository is required (include ending slash if required)
 PGSRC="$uri"
@@ -240,7 +235,7 @@ PGEXTRA="$@"
 #add additional variables used by your scripts here
 EOT
       #source uri not defined: open the editor
-      [ -z "$uri" ] && ${EDITOR:-nano} ~/.playground/rc/$name
+      [ -z "$uri" ] && ${EDITOR:-nano} ~/.playground/rc/"$name"
     fi
     $die
     ;;
@@ -253,10 +248,10 @@ EOT
     [ -z "$name" ] && name="$PGNAME"
     [ -z "$name" ] && msg-red "Repo name is missing." && $die -1
     [[ "$name" != $(sanitize "$name") ]] && msg-red "Repo name contains invalid characters." && $die -2
-    [ ! -f ~/.playground/rc/$name ] && msg-red "[$name] repository configuration file not found." && $die -3
+    [ ! -f ~/.playground/rc/"$name" ] && msg-red "[$name] repository configuration file not found." && $die -3
     shift      
     #open the editor
-    ${EDITOR:-nano} ~/.playground/rc/$name
+    ${EDITOR:-nano} ~/.playground/rc/"$name"
     $die
     ;;
 
@@ -269,7 +264,7 @@ EOT
     name="$1"
     #check if repository name is valid
     [[ "$name" != $(sanitizedot "$name") ]] && msg-red "Repo name contains invalid characters." && $die -1
-    [ ! -f ~/.playground/rc/$name ] && msg-red "[$name] repository configuration not found" && $die -2
+    [ ! -f ~/.playground/rc/"$name" ] && msg-red "[$name] repository configuration not found" && $die -2
     shift
     #--default: set default source repo
     [[ "$1" == "--default" ]] && sed -i "s/^export PGNAME=.*/export PGNAME=$name/" ~/.bashrc
@@ -314,22 +309,22 @@ esac
 [[ "$name" != $(sanitizedot "$name") ]] && msg-red "Repo name contains invalid characters." && $die -2
 
 #repo config file must exist
-[ ! -f ~/.playground/rc/$name ] && msg-red "[$name] Repository configuration file not found." && $die -3
+[ ! -f ~/.playground/rc/"$name" ] && msg-red "[$name] Repository configuration file not found." && $die -3
 
 #source the configuration file
-. ~/.playground/rc/$name
+. ~/.playground/rc/"$name"
 
 #source the per host configuration file
-[ -f ~/.playground/rc/$name.$HOSTNAME ] && . ~/.playground/rc/$name.$HOSTNAME
+[ -f ~/.playground/rc/"$name"."$HOSTNAME" ] && . ~/.playground/rc/"$name"."$HOSTNAME"
 
 #at least the repo source url must had been defined
 [ -z "$PGSRC" ] && msg-red "[$name] Repository source has not been configured." && $die -4
 
 #add personal access token authentication header (github private repo)
-[ ! -z "$PGPAT" ] && cmd+=(-H "Authorization: token $PGPAT")
+[ -n "$PGPAT" ] && cmd+=(-H "Authorization: token $PGPAT")
 
 #add extra parameters to curl
-[ ! -z "$PGEXTRA" ] && cmd+=($PGEXTRA)
+[ -n "$PGEXTRA" ] && cmd+=($PGEXTRA)
 
 case $1 in
   --)
@@ -379,7 +374,7 @@ case $1 in
     dst=$(mktemp -d "/tmp/${SCRIPT_NAME}.XXXXXXXX")
     #cleanup temp dir on exit
     trap "popd && rm -rf -- '$dst'" SIGINT SIGTERM ERR EXIT
-    pushd "$dst"
+    pushd "$dst" || $die -9
     playbooks=()
     #stop downloading files when next parameter starts with a dash
     while [[ "$1" != "" && "$1" != -* ]]; do
@@ -388,7 +383,7 @@ case $1 in
       playbooks+=("$1")
       shift
     done
-    [ ${playbooks[#]} -lt 1 ] && msg-red "[$name] At least one playbook is needed." && $die -3
+    [ "${playbooks[#]}" -lt 1 ] && msg-red "[$name] At least one playbook is needed." && $die -3
     ansible-playbook "$@" "${playbooks[@]}"
     ;;
 
