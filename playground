@@ -8,6 +8,7 @@ Retrieves scripts, snippets and ansible playbooks from a remote repository/websi
 Usage:
   pg [@<repo>] <file> [...]: executes a script (with bash).
   pg [@<repo>] debug <file> [...]: debugs a script (with bash -x).
+  pg [@<repo>} sudo <file> [...]: executes a script (with sudo bash)
   pg [@<repo>] help <file>: shows help for a script.
   pg [@<repo>] url <file>: writes to stdout the full url that points to the file.
   pg [@<repo>] cat <file>: writes to stdout the contents of the file.
@@ -394,6 +395,15 @@ case $1 in
     shift
     #source the playground script and append a terminating new line to the end of the file
     printf 'PGNAME=%s \n. %s --\n%s\n' "$name" "$SCRIPT_DIR/$SCRIPT_NAME" "$file" | bash -x /dev/stdin "$@"
+    ;;
+
+  sudo)
+    shift
+    #downloads contents of file into memory
+    file=$("${cmd[@]}" "$PGSRC$1")
+    shift
+    #source the playground script and append a terminating new line to the end of the file
+    printf 'PGNAME=%s \n. %s --\n%s\n' "$name" "$SCRIPT_DIR/$SCRIPT_NAME" "$file" | sudo bash /dev/stdin "$@"
     ;;
 
   *)

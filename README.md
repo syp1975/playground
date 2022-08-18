@@ -39,6 +39,7 @@ Retrieves scripts, snippets and ansible playbooks from a remote repository/websi
 Usage:
   pg [@<repo>] <file> [...]: executes a script (with bash).
   pg [@<repo>] debug <file> [...]: debugs a script (with bash -x).
+  pg [@<repo>} sudo <file> [...]: executes a script (with sudo bash)
   pg [@<repo>] help <file>: shows help for a script.
   pg [@<repo>] url <file>: writes to stdout the full url that points to the file.
   pg [@<repo>] cat <file>: writes to stdout the contents of the file.
@@ -54,7 +55,7 @@ Usage:
   pg edit [<repo>]: opens the configuration file of the repository with the editor.
   pg push [message]: commits and pushes (with git) all modifications, deletions and additions in the working tree of the current folder.
 Where:
-  repo: name of a file located in `~/.playground/rc/` that contains the configuration of the source repository.
+  repo: name of a file located in ~/.playground/rc/ that contains the configuration of the source repository.
     Only alphanumerics, dashes and underscores are accepted in the name.
   uri: base url to download a file from the repository, including ending slashes if needed.
   file: path of the file to be retrieved from the repository.
@@ -69,6 +70,9 @@ When a repository is selected, either with the ``@repo`` parameter or with the `
 2. ``~/.playground/rc/<repo>.<hostname>``
 
 The values of the variables defined on the per host configuration file, will overwrite the values of the variables of the main configuration file.
+
+When executing scripts trough privileged scalation (sudo), remember to use ``pg sudo`` command instead of ``sudo pg``.
+This is because the playground and repository configurations files are sourced instead of being executed as a command and sudo can not execute shell builtin commands.
 
 ## Some examples
 ```sh
