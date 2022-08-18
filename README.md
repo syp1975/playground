@@ -37,6 +37,7 @@ It will display its usage:
 Playground.
 Retrieves scripts, snippets and ansible playbooks from a remote repository/website.
 Usage:
+  pg [@<repo>] list [...]: list files on the source repository (github only, requires jq), parameters are passed to grep for filtering.
   pg [@<repo>] <file> [...]: executes a script (with bash).
   pg [@<repo>] debug <file> [...]: debugs a script (with bash -x).
   pg [@<repo>} sudo <file> [...]: executes a script (with sudo bash)
@@ -59,11 +60,8 @@ Where:
     Only alphanumerics, dashes and underscores are accepted in the name.
   uri: base url to download a file from the repository, including ending slashes if needed.
   file: path of the file to be retrieved from the repository.
-  ...: optional parameters passed to the script/ansible-playbook/curl.
+  ...: optional parameters passed to the script/ansible-playbook/curl/grep.
 ```
-
-Not yet implemented:
-* ``pg [@repo] list [filter]``: displays a list of files from the repository.
 
 When a repository is selected, either with the ``@repo`` parameter or with the ``pg src repo`` command, *playground* will *source* the configuration for a repository from this shell scripts:
 1. ``~/.playground/rc/<repo>``

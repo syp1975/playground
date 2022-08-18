@@ -6,6 +6,7 @@ usage() {
 **Playground.
 Retrieves scripts, snippets and ansible playbooks from a remote repository/website.
 Usage:
+  pg [@<repo>] list [...]: list files on the source repository (github only, requires jq), parameters are passed to grep for filtering.
   pg [@<repo>] <file> [...]: executes a script (with bash).
   pg [@<repo>] debug <file> [...]: debugs a script (with bash -x).
   pg [@<repo>} sudo <file> [...]: executes a script (with sudo bash)
@@ -28,7 +29,7 @@ Where:
     Only alphanumerics, dashes and underscores are accepted in the name.
   uri: base url to download a file from the repository, including ending slashes if needed.
   file: path of the file to be retrieved from the repository.
-  ...: optional parameters passed to the script/ansible-playbook/curl.
+  ...: optional parameters passed to the script/ansible-playbook/curl/grep.
 EOF
 }
 
@@ -330,6 +331,18 @@ esac
 case $1 in
   --)
     $die
+    ;;
+
+  list)
+    shift
+    owner=$(echo "$PGSRC" | sed 's=https://[^/]*/\([^/]*\)/.*=\1=')
+    repo=$(echo "$PGSRC" | sed 's=https://[^/]*/[^/]*/\([^/]*\)/.*=\1=')
+    tag=$(echo "$PGSRC" | sed 's=https://[^/]*/[^/]*/[^/]*/\([^/]*\)/.*=\1=')
+    if [ $# -eq 0 ]; then
+      "${cmd[@]}" "https://api.github.com/repos/$owner/$repo/git/trees/$tag?recursive=1" | jq -r '.tree|.[]|select(.type=="blob")|.path'
+    else
+      "${cmd[@]}" "https://api.github.com/repos/$owner/$repo/git/trees/$tag?recursive=1" | jq -r '.tree|.[]|select(.type=="blob")|.path' | grep "$@"
+    fi
     ;;
 
   help)
