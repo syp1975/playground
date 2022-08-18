@@ -241,7 +241,7 @@ EOT
     fi
     $die
     ;;
-    
+
   edit)
     #edit a repository configuration file
     shift
@@ -251,7 +251,7 @@ EOT
     [ -z "$name" ] && msg-red "Repo name is missing." && $die -1
     [[ "$name" != $(sanitize "$name") ]] && msg-red "Repo name contains invalid characters." && $die -2
     [ ! -f ~/.playground/rc/"$name" ] && msg-red "[$name] repository configuration file not found." && $die -3
-    shift      
+    shift
     #open the editor
     ${EDITOR:-nano} ~/.playground/rc/"$name"
     $die
@@ -287,7 +287,7 @@ EOT
       git commit -a -m "$@"
     fi
     #push to origin
-    git push
+    [ $? -eq 0 ] && git push
     $die
     ;;
 
@@ -297,7 +297,7 @@ EOT
     name="${1:1}"
     shift
     ;;
-    
+
   *)
     #use selected source repository
     name="$PGNAME"
