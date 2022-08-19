@@ -134,10 +134,13 @@ cfgset() {
   shift
 
   #count the number times the key appears uncommented on the file
+  sudo_cmd='sudo '
   if [ -f "$file" ]; then
     count=$(grep -c -e "^[;]*$key\s*[\s=:]" < "$file")
+    [ -w "$file" ] && sudo_cmd=''
   else
     count=0
+    [ -w $(dirname "$file") ] && sudo_cmd=''
   fi
 
   #key already exists?
@@ -145,20 +148,20 @@ cfgset() {
     #comment key?
     if [ -n "$comment" ]; then
       msg-blue "[$file] comment $key"
-      sed -i "s/^\(${key}[ =:].*\)/${comment}\1/" "$file"
+      ${sudo_cmd}sed -i "s/^\(${key}[ =:].*\)/${comment}\1/" "$file"
     #value is defined?
     elif [ -n "$val" ]; then
       msg-blue "[$file] update $key$sep$pub"
       val=$(printf '%s' "$val" | sed -e 's/[\/&]/\\&/g')
-      sed -i "s/^[;]*\(${key}[ =:]\).*/\1${val}/" "$file"
+      ${sudo_cmd}sed -i "s/^[;]*\(${key}[ =:]\).*/\1${val}/" "$file"
     else
       msg-blue "[$file] remove $key"
-      sed -i "/^${key}[ =:].*/d" "$file"
+      ${sudo_cmd}sed -i "/^${key}[ =:].*/d" "$file"
     fi
   #value is defined?
   elif [ -n "$val" ]; then
     msg-blue "[$file] append $key$sep$pub"
-    echo "$key$sep$val" >> "$file"
+    echo "$key$sep$val" | ${sudo_cmd}tee -a "$file"
   fi
 }
 
